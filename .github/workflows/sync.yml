@@ -1,0 +1,41 @@
+name: Sync HowToLiveBetter to COS
+
+# 每天定时从上游仓库重新解析并上传最新数据到 COS（小程序端自动拉取更新）
+on:
+  schedule:
+    # UTC 03:17 ≈ 北京时间 11:17（新疆当地约 09:17），每日一次
+    - cron: '17 3 * * *'
+  workflow_dispatch: {}   # 允许在 Actions 页面手动触发
+
+permissions:
+  contents: read
+
+jobs:
+  build-upload:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repo (含 tools/ 脚本)
+        uses: actions/checkout@v4
+
+      - name: Clone upstream book source
+        run: git clone --depth 1 https://github.com/eternity4719/HowToLiveBetter /tmp/bookrepo
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install COS SDK
+        run: pip install cos-python-sdk-v5
+
+      - name: Build dist JSON from upstream book/
+        run: python tools/build_dist.py --book /tmp/bookrepo/book --out dist
+
+      - name: Upload to COS
+        env:
+          COS_SECRET_ID: ${{ secrets.COS_SECRET_ID }}
+          COS_SECRET_KEY: ${{ secrets.COS_SECRET_KEY }}
+          COS_BUCKET: ${{ secrets.COS_BUCKET }}
+          COS_REGION: ${{ secrets.COS_REGION }}
+          COS_PREFIX: ${{ secrets.COS_PREFIX }}
+        run: python tools/upload_cos.py --dist dist
