@@ -32,23 +32,44 @@ def upload(dist_dir):
     except Exception as e:
         print("WARN put_bucket_acl:", e)
 
-    n = 0
+    # 收集全部待上传文件，按「章节 → 索引 → meta」的顺序传：
+    # meta.json 是小程序端的版本开关，必须最后一个落。若中途失败
+    # （网络抖、密钥过期），版本号不变，端上继续用旧数据自洽，下次
+    # 重传自动修复；否则 meta 已覆盖而后半截章节还是旧内容，端上按
+    # 新版本全量拉取会得到半新半旧的数据，且永不自愈（版本号已最新，
+    # 之后每次同步都判定无需更新）。items-index.json 排在 meta 之前、
+    # 章节之后：它先落地无害——端上只在版本号变化时才拉新 index。
+    entries = []
     for root, _, files in os.walk(dist_dir):
-        for fname in sorted(files):
+        for fname in files:
             full = os.path.join(root, fname)
             rel = os.path.relpath(full, dist_dir).replace("\\", "/")
-            key = prefix + "/" + rel
-            with open(full, "rb") as fh:
-                body = fh.read()
-            client.put_object(
-                Bucket=bucket,
-                Body=body,
-                Key=key,
-                ACL="public-read",
-                ContentType="application/json; charset=utf-8",
-            )
-            n += 1
-            print(f"PUT {key} ({len(body)} bytes)")
+            entries.append((rel, full))
+
+    def upload_order(item):
+        rel = item[0]
+        if rel == "meta.json":
+            return (2, rel)
+        if rel == "items-index.json":
+            return (1, rel)
+        return (0, rel)
+
+    entries.sort(key=upload_order)
+
+    n = 0
+    for rel, full in entries:
+        key = prefix + "/" + rel
+        with open(full, "rb") as fh:
+            body = fh.read()
+        client.put_object(
+            Bucket=bucket,
+            Body=body,
+            Key=key,
+            ACL="public-read",
+            ContentType="application/json; charset=utf-8",
+        )
+        n += 1
+        print(f"PUT {key} ({len(body)} bytes)")
     print(f"UPLOADED {n} files to {bucket}/{prefix}/")
     return n
 
